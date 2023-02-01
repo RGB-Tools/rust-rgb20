@@ -157,4 +157,58 @@ impl Asset {
 
         Ok(transition)
     }
+
+    /// Static entropy version of the transfer method
+    pub fn transfer_static(
+        &self,
+        inputs: BTreeSet<OutPoint>,
+        payment: EndpointValueMap,
+        change: SealValueMap,
+    ) -> Result<Transition, Error> {
+        // Collecting all input allocations
+        let mut input_usto = Vec::<OwnedValue>::new();
+        for outpoint in inputs {
+            let coins = self.outpoint_coins(outpoint);
+            if coins.is_empty() {
+                Err(Error::UnrelatedInput(outpoint))?
+            }
+            input_usto.extend(coins);
+        }
+        // Computing sum of inputs
+        let input_amounts: Vec<_> = input_usto.iter().map(|coin| coin.state).collect();
+        let total_inputs = input_amounts
+            .iter()
+            .fold(0u64, |acc, coin| acc + coin.value);
+        let total_outputs = change.sum() + payment.sum();
+
+        if total_inputs != total_outputs {
+            Err(Error::InputsNotEqualOutputs)?
+        }
+
+        let assignments = type_map! {
+            OwnedRightType::Assets =>
+            TypedAssignments::zero_balanced_static(input_amounts, change, payment)
+        };
+
+        let mut parent = ParentOwnedRights::default();
+        for coin in input_usto {
+            parent
+                .entry(coin.outpoint.node_id)
+                .or_insert_with(|| empty!())
+                .entry(OwnedRightType::Assets.into())
+                .or_insert_with(|| empty!())
+                .push(coin.outpoint.no);
+        }
+
+        let transition = Transition::with(
+            TransitionType::Transfer,
+            empty!(),
+            empty!(),
+            assignments.into(),
+            empty!(),
+            parent,
+        );
+
+        Ok(transition)
+    }
 }
